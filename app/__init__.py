@@ -29,6 +29,11 @@ def create_app(config_override=None):
     from app.routes import api_bp
     app.register_blueprint(api_bp, url_prefix='/api')
 
+    @app.after_request
+    def add_cors_headers(response):
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        return response
+
     @app.route('/health')
     def health():
         return {'status': 'healthy'}
