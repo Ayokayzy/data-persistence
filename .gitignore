@@ -1,0 +1,45 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Environment and local config
+.env
+.env.*
+!.env.example
+!config.env.example
+
+# Flask instance/config artifacts
+instance/
+*.db
+*.sqlite3
+
+# Test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build/distribution artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Editor/OS files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Logs
+*.log
