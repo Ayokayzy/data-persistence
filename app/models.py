@@ -53,7 +53,6 @@ class Profile(db.Model):
             'country_probability': self.country_probability,
             # 'api_responses': self.api_responses,
             'created_at': format_utc_iso8601(self.created_at),
-            'updated_at': format_utc_iso8601(self.updated_at),
         }
 
     def __repr__(self):
