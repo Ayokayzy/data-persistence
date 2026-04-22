@@ -18,7 +18,7 @@ class Profile(db.Model):
         value = (ts_ms << 80) | (0x7 << 76) | (rand_a << 64) | (0x2 << 62) | rand_b
         return str(uuid.UUID(int=value))
 
-    id = db.Column(db.String(36), primary_key=True, default=generate_uuid_v7)
+    id = db.Column(db.String(36), primary_key=True, default=lambda: Profile.generate_uuid_v7())
     name = db.Column(db.String(255), nullable=False, index=True)
     gender = db.Column(db.String(20), nullable=True)
     gender_probability = db.Column(db.Float, nullable=True)
@@ -26,6 +26,7 @@ class Profile(db.Model):
     age = db.Column(db.Integer, nullable=True)
     age_group = db.Column(db.String(20), nullable=True)
     country_id = db.Column(db.String(10), nullable=True)
+    country_name = db.Column(db.String(100), nullable=True)
     country_probability = db.Column(db.Float, nullable=True)
     # api_responses = db.Column(db.JSON, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -50,8 +51,8 @@ class Profile(db.Model):
             'age': self.age,
             'age_group': self.age_group,
             'country_id': self.country_id,
+            'country_name': self.country_name,
             'country_probability': self.country_probability,
-            # 'api_responses': self.api_responses,
             'created_at': format_utc_iso8601(self.created_at),
         }
 

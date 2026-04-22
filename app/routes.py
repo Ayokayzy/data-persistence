@@ -2,6 +2,14 @@ from flask import Blueprint, request, jsonify, current_app
 from app import db
 from app.models import Profile
 from app.services.enrichment import enrich_profile_data, EnrichmentError
+from app.services.profile_query import (
+    parse_profile_list_params,
+    parse_profile_search_params,
+    build_profile_list_query,
+    apply_sort_and_pagination,
+)
+from app.services.profile_serialization import serialize_profile_list_item
+from app.services.profile_search_parser import parse_nl_profile_query
 
 api_bp = Blueprint('api', __name__)
 
@@ -70,38 +78,73 @@ async def create_profile():
     return success_response(profile.to_dict(), status_code=201)
 
 
+def _validate_numeric_params(args):
+    """Return an error message if any numeric query param has a non-numeric value."""
+    int_params = ('min_age', 'max_age', 'page', 'limit')
+    float_params = ('min_gender_probability', 'min_country_probability')
+    for key in int_params:
+        val = args.get(key)
+        if val is not None:
+            try:
+                int(val)
+            except (TypeError, ValueError):
+                return 'Invalid query parameters'
+    for key in float_params:
+        val = args.get(key)
+        if val is not None:
+            try:
+                float(val)
+            except (TypeError, ValueError):
+                return 'Invalid query parameters'
+    return None
+
+
 @api_bp.route('/profiles', methods=['GET'])
 def list_profiles():
-    query = Profile.query
+    validation_error = _validate_numeric_params(request.args)
+    if validation_error:
+        return error_response(validation_error, 422)
 
-    # Optional filters (case-insensitive)
-    gender = request.args.get('gender')
-    if gender:
-        query = query.filter(db.func.lower(Profile.gender) == gender.lower())
-
-    country_id = request.args.get('country_id')
-    if country_id:
-        query = query.filter(db.func.lower(Profile.country_id) == country_id.lower())
-
-    age_group = request.args.get('age_group')
-    if age_group:
-        query = query.filter(db.func.lower(Profile.age_group) == age_group.lower())
-
-    profiles = query.order_by(Profile.created_at.desc()).all()
-
-    # Simplified profile objects for list view
-    data = [{
-        'id': p.id,
-        'name': p.name,
-        'gender': p.gender,
-        'age': p.age,
-        'age_group': p.age_group,
-        'country_id': p.country_id,
-    } for p in profiles]
+    params = parse_profile_list_params(request.args)
+    base_query = build_profile_list_query(params)
+    total = base_query.count()
+    profiles = apply_sort_and_pagination(base_query, params).all()
+    data = [serialize_profile_list_item(p) for p in profiles]
 
     return jsonify({
         'status': 'success',
-        'count': len(data),
+        'page': params.page,
+        'limit': params.limit,
+        'total': total,
+        'data': data
+    }), 200
+
+
+@api_bp.route('/profiles/search', methods=['GET'])
+def search_profiles():
+    q = request.args.get('q', '')
+    if not q or not q.strip():
+        return error_response('Unable to interpret query', 400)
+
+    parsed_filters = parse_nl_profile_query(q)
+    if not parsed_filters:
+        return error_response('Unable to interpret query', 400)
+
+    validation_error = _validate_numeric_params(request.args)
+    if validation_error:
+        return error_response(validation_error, 422)
+
+    params = parse_profile_search_params(request.args, parsed_filters)
+    base_query = build_profile_list_query(params)
+    total = base_query.count()
+    profiles = apply_sort_and_pagination(base_query, params).all()
+    data = [serialize_profile_list_item(p) for p in profiles]
+
+    return jsonify({
+        'status': 'success',
+        'page': params.page,
+        'limit': params.limit,
+        'total': total,
         'data': data
     }), 200
 

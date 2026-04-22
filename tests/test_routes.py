@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime, timezone, timedelta
 from app import create_app, db
 from app.models import Profile
 
@@ -146,6 +147,74 @@ class TestErrorResponse:
 
 
 class TestRoutes:
+    @staticmethod
+    def _seed_profiles():
+        base = datetime(2026, 4, 1, 12, 0, tzinfo=timezone.utc).replace(tzinfo=None)
+        rows = [
+            Profile(
+                name='emmanuel',
+                gender='male',
+                gender_probability=0.99,
+                age=34,
+                age_group='adult',
+                country_id='NG',
+                country_probability=0.85,
+                created_at=base + timedelta(days=1),
+            ),
+            Profile(
+                name='sarah',
+                gender='female',
+                gender_probability=0.95,
+                age=28,
+                age_group='adult',
+                country_id='US',
+                country_probability=0.75,
+                created_at=base + timedelta(days=2),
+            ),
+            Profile(
+                name='jide',
+                gender='male',
+                gender_probability=0.80,
+                age=19,
+                age_group='teenager',
+                country_id='NG',
+                country_probability=0.60,
+                created_at=base + timedelta(days=3),
+            ),
+            Profile(
+                name='musa',
+                gender='male',
+                gender_probability=0.88,
+                age=21,
+                age_group='adult',
+                country_id='KE',
+                country_probability=0.77,
+                created_at=base + timedelta(days=4),
+            ),
+            Profile(
+                name='helena',
+                gender='female',
+                gender_probability=0.92,
+                age=35,
+                age_group='adult',
+                country_id='AO',
+                country_probability=0.81,
+                created_at=base + timedelta(days=5),
+            ),
+            Profile(
+                name='amina',
+                gender='female',
+                gender_probability=0.91,
+                age=18,
+                age_group='teenager',
+                country_id='NG',
+                country_probability=0.84,
+                created_at=base + timedelta(days=6),
+            ),
+        ]
+        db.session.add_all(rows)
+        db.session.commit()
+
     def test_health(self, client):
         response = client.get('/health')
         assert response.status_code == 200
@@ -156,8 +225,141 @@ class TestRoutes:
         assert response.status_code == 200
         data = response.json
         assert data['status'] == 'success'
-        assert data['count'] == 0
+        assert data['page'] == 1
+        assert data['limit'] == 10
+        assert data['total'] == 0
         assert data['data'] == []
+
+    def test_list_profiles_combined_filters(self, app, client):
+        with app.app_context():
+            self._seed_profiles()
+
+        response = client.get(
+            '/api/profiles?gender=male&country_id=NG&min_age=25&sort_by=age&order=desc&page=1&limit=10'
+        )
+        assert response.status_code == 200
+        data = response.json
+        assert data['status'] == 'success'
+        assert data['page'] == 1
+        assert data['limit'] == 10
+        assert data['total'] == 1
+        assert len(data['data']) == 1
+        assert data['data'][0]['name'] == 'emmanuel'
+        assert data['data'][0]['country_name'] is None
+
+    def test_list_profiles_sorting(self, app, client):
+        with app.app_context():
+            self._seed_profiles()
+
+        age_desc = client.get('/api/profiles?sort_by=age&order=desc').json['data']
+        assert [p['name'] for p in age_desc] == ['helena', 'emmanuel', 'sarah', 'musa', 'jide', 'amina']
+
+        age_asc = client.get('/api/profiles?sort_by=age&order=asc').json['data']
+        assert [p['name'] for p in age_asc] == ['jide', 'amina', 'musa', 'sarah', 'emmanuel', 'helena']
+
+        gp_desc = client.get('/api/profiles?sort_by=gender_probability&order=desc').json['data']
+        assert [p['name'] for p in gp_desc] == ['emmanuel', 'sarah', 'helena', 'amina', 'musa', 'jide']
+
+    def test_list_profiles_pagination_defaults_and_bounds(self, app, client):
+        with app.app_context():
+            self._seed_profiles()
+
+        default_response = client.get('/api/profiles')
+        assert default_response.status_code == 200
+        default_data = default_response.json
+        assert default_data['page'] == 1
+        assert default_data['limit'] == 10
+
+        capped_limit = client.get('/api/profiles?limit=500').json
+        assert capped_limit['limit'] == 50
+
+        invalid_values = client.get('/api/profiles?page=0&limit=-2').json
+        assert invalid_values['page'] == 1
+        assert invalid_values['limit'] == 10
+
+    def test_list_profiles_invalid_params_fallback(self, app, client):
+        with app.app_context():
+            self._seed_profiles()
+
+        data = client.get('/api/profiles?sort_by=nope&order=up&page=abc&limit=xyz&min_age=not-a-number').json
+        assert data['status'] == 'success'
+        assert data['page'] == 1
+        assert data['limit'] == 10
+        # Falls back to created_at desc: newest seeded row first.
+        assert data['data'][0]['name'] == 'amina'
+
+    def test_list_profiles_response_shape(self, app, client):
+        with app.app_context():
+            self._seed_profiles()
+
+        payload = client.get('/api/profiles').json
+        assert set(payload.keys()) == {'status', 'page', 'limit', 'total', 'data'}
+        row = payload['data'][0]
+        assert set(row.keys()) == {
+            'id',
+            'name',
+            'gender',
+            'gender_probability',
+            'age',
+            'age_group',
+            'country_id',
+            'country_name',
+            'country_probability',
+            'created_at',
+        }
+
+    def test_list_route_delegates_to_profile_services(self, app, client, monkeypatch):
+        with app.app_context():
+            from app import routes
+
+            calls = {'parse': 0, 'build': 0, 'apply': 0, 'serialize': 0}
+
+            class DummyParams:
+                page = 1
+                limit = 10
+
+            class DummyQuery:
+                def count(self):
+                    return 1
+
+                def all(self):
+                    return [Profile(name='dummy')]
+
+            def fake_parse(args):
+                calls['parse'] += 1
+                return DummyParams()
+
+            def fake_build(params):
+                calls['build'] += 1
+                return DummyQuery()
+
+            def fake_apply(query, params):
+                calls['apply'] += 1
+                return query
+
+            def fake_serialize(profile):
+                calls['serialize'] += 1
+                return {
+                    'id': 'x',
+                    'name': 'dummy',
+                    'gender': None,
+                    'gender_probability': None,
+                    'age': None,
+                    'age_group': None,
+                    'country_id': None,
+                    'country_name': None,
+                    'country_probability': None,
+                    'created_at': None,
+                }
+
+            monkeypatch.setattr(routes, 'parse_profile_list_params', fake_parse)
+            monkeypatch.setattr(routes, 'build_profile_list_query', fake_build)
+            monkeypatch.setattr(routes, 'apply_sort_and_pagination', fake_apply)
+            monkeypatch.setattr(routes, 'serialize_profile_list_item', fake_serialize)
+
+            response = client.get('/api/profiles')
+            assert response.status_code == 200
+            assert calls == {'parse': 1, 'build': 1, 'apply': 1, 'serialize': 1}
 
     def test_get_profile_not_found(self, client):
         response = client.get('/api/profiles/nonexistent-id')
@@ -175,6 +377,80 @@ class TestRoutes:
         assert 'total' in data['data']
         assert 'age_group_distribution' in data['data']
         assert 'gender_distribution' in data['data']
+
+    def test_search_profiles_young_males(self, app, client):
+        with app.app_context():
+            self._seed_profiles()
+
+        response = client.get('/api/profiles/search?q=young+males')
+        assert response.status_code == 200
+        data = response.json
+        assert data['status'] == 'success'
+        assert all(row['gender'] == 'male' for row in data['data'])
+        assert all(16 <= row['age'] <= 24 for row in data['data'])
+
+    def test_search_profiles_females_above_30(self, app, client):
+        with app.app_context():
+            self._seed_profiles()
+
+        response = client.get('/api/profiles/search?q=females+above+30')
+        assert response.status_code == 200
+        data = response.json
+        assert all(row['gender'] == 'female' for row in data['data'])
+        assert all(row['age'] >= 30 for row in data['data'])
+
+    def test_search_profiles_people_from_angola(self, app, client):
+        with app.app_context():
+            self._seed_profiles()
+
+        response = client.get('/api/profiles/search?q=people+from+angola')
+        assert response.status_code == 200
+        data = response.json
+        assert data['total'] == 1
+        assert data['data'][0]['country_id'] == 'AO'
+
+    def test_search_profiles_adult_males_from_kenya(self, app, client):
+        with app.app_context():
+            self._seed_profiles()
+
+        response = client.get('/api/profiles/search?q=adult+males+from+kenya')
+        assert response.status_code == 200
+        data = response.json
+        assert data['total'] == 1
+        row = data['data'][0]
+        assert row['gender'] == 'male'
+        assert row['age_group'] == 'adult'
+        assert row['country_id'] == 'KE'
+
+    def test_search_profiles_male_and_female_teenagers_above_17(self, app, client):
+        with app.app_context():
+            self._seed_profiles()
+
+        response = client.get('/api/profiles/search?q=male+and+female+teenagers+above+17')
+        assert response.status_code == 200
+        data = response.json
+        assert data['total'] >= 1
+        # gender filter is dropped when both male and female appear.
+        assert {row['gender'] for row in data['data']} == {'female', 'male'}
+        assert all(row['age_group'] == 'teenager' and row['age'] >= 17 for row in data['data'])
+
+    def test_search_profiles_uninterpretable(self, client):
+        response = client.get('/api/profiles/search?q=just+vibes')
+        assert response.status_code == 400
+        data = response.json
+        assert data == {'status': 'error', 'message': 'Unable to interpret query'}
+
+    def test_search_profiles_pagination(self, app, client):
+        with app.app_context():
+            self._seed_profiles()
+
+        response = client.get('/api/profiles/search?q=adult&page=1&limit=2')
+        assert response.status_code == 200
+        data = response.json
+        assert data['status'] == 'success'
+        assert data['page'] == 1
+        assert data['limit'] == 2
+        assert len(data['data']) == 2
 
 
 class TestEnrichmentError:

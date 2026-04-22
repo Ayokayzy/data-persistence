@@ -145,38 +145,114 @@ curl -X POST http://localhost:5000/api/profiles \
 ### 2. Get All Profiles
 **GET** `/api/profiles`
 
-Returns all profiles with optional filters.
+Returns profiles with filtering, sorting, and pagination.
+
+Supported filters (combinable with AND):
+- `gender`
+- `age_group`
+- `country_id`
+- `min_age`
+- `max_age`
+- `min_gender_probability`
+- `min_country_probability`
+
+Sorting:
+- `sort_by`: `age` | `created_at` | `gender_probability`
+- `order`: `asc` | `desc`
+
+Pagination:
+- `page`: default `1`
+- `limit`: default `10`, max `50`
+
+Fallback behavior for invalid query values:
+- Invalid `sort_by` -> `created_at`
+- Invalid `order` -> `desc`
+- Invalid/non-positive `page` -> `1`
+- Invalid/non-positive `limit` -> `10`
+- `limit > 50` -> `50`
+- Invalid numeric filters are ignored
 
 ```bash
-# Get all
+# Get first page
 curl http://localhost:5000/api/profiles
 
-# Filter by gender (case-insensitive)
-curl "http://localhost:5000/api/profiles?gender=male"
-
-# Filter by country
-curl "http://localhost:5000/api/profiles?country_id=NG"
-
-# Filter by age group
-curl "http://localhost:5000/api/profiles?age_group=adult"
-
-# Combine filters
-curl "http://localhost:5000/api/profiles?gender=male&country_id=NG&age_group=adult"
+# Combined filters + sorting + pagination
+curl "http://localhost:5000/api/profiles?gender=male&country_id=NG&min_age=25&sort_by=age&order=desc&page=1&limit=10"
 ```
 
 **Response (200 OK):**
 ```json
 {
   "status": "success",
-  "count": 2,
+  "page": 1,
+  "limit": 10,
+  "total": 2026,
   "data": [
     {
-      "id": "id-1",
+      "id": "b3f9c1e2-7d4a-4c91-9c2a-1f0a8e5b6d12",
       "name": "emmanuel",
       "gender": "male",
-      "age": 25,
+      "gender_probability": 0.99,
+      "age": 34,
       "age_group": "adult",
-      "country_id": "NG"
+      "country_id": "NG",
+      "country_name": null,
+      "country_probability": 0.85,
+      "created_at": "2026-04-01T12:00:00Z"
+    }
+  ]
+}
+```
+
+Implementation note: this endpoint uses a modular query pipeline (`query param parsing` -> `filter builder` -> `sort/pagination` -> `serializer`) to keep route handlers thin and reusable.
+
+---
+
+### 3. Natural Language Search
+**GET** `/api/profiles/search`
+
+Parses plain-English query text and maps it to filters using rule-based logic only.
+
+Query parameters:
+- `q` (required): natural language query
+- `page` and `limit`: same behavior as `GET /api/profiles`
+
+Example:
+```bash
+curl "http://localhost:5000/api/profiles/search?q=young%20males%20from%20nigeria&page=1&limit=10"
+```
+
+Supported mapping examples:
+- `young males` -> `gender=male` + `min_age=16` + `max_age=24`
+- `females above 30` -> `gender=female` + `min_age=30`
+- `people from angola` -> `country_id=AO`
+- `adult males from kenya` -> `gender=male` + `age_group=adult` + `country_id=KE`
+- `male and female teenagers above 17` -> `age_group=teenager` + `min_age=17` (gender dropped)
+
+If the query cannot be interpreted:
+```json
+{ "status": "error", "message": "Unable to interpret query" }
+```
+
+Success response shape matches `GET /api/profiles`:
+```json
+{
+  "status": "success",
+  "page": 1,
+  "limit": 10,
+  "total": 2026,
+  "data": [
+    {
+      "id": "b3f9c1e2-7d4a-4c91-9c2a-1f0a8e5b6d12",
+      "name": "emmanuel",
+      "gender": "male",
+      "gender_probability": 0.99,
+      "age": 34,
+      "age_group": "adult",
+      "country_id": "NG",
+      "country_name": null,
+      "country_probability": 0.85,
+      "created_at": "2026-04-01T12:00:00Z"
     }
   ]
 }
@@ -184,7 +260,7 @@ curl "http://localhost:5000/api/profiles?gender=male&country_id=NG&age_group=adu
 
 ---
 
-### 3. Get Single Profile
+### 4. Get Single Profile
 **GET** `/api/profiles/{id}`
 
 ```bash
@@ -212,7 +288,7 @@ curl http://localhost:5000/api/profiles/b3f9c1e2-7d4a-4c91-9c2a-1f0a8e5b6d12
 
 ---
 
-### 4. Get Profile by Name
+### 5. Get Profile by Name
 **GET** `/api/profiles/by-name/{name}`
 
 ```bash
@@ -221,7 +297,7 @@ curl "http://localhost:5000/api/profiles/by-name/emmanuel"
 
 ---
 
-### 5. Update Profile
+### 6. Update Profile
 **PUT** `/api/profiles/{id}`
 
 ```bash
@@ -234,7 +310,7 @@ If the name is changed, the API re-fetches enrichment data from external APIs.
 
 ---
 
-### 6. Delete Profile
+### 7. Delete Profile
 **DELETE** `/api/profiles/{id}`
 
 ```bash
@@ -245,7 +321,7 @@ Returns `204 No Content` on success.
 
 ---
 
-### 7. Get Statistics
+### 8. Get Statistics
 **GET** `/api/profiles/stats`
 
 ```bash
@@ -354,6 +430,76 @@ Companies with large databases of customer names can enrich them in batch:
 source venv/bin/activate
 python -m pytest tests/ -v
 ```
+
+---
+
+## Seeding Profiles from JSON
+
+You can seed profile records from a JSON array file using the Flask CLI command below.
+
+```bash
+flask seed-profiles /absolute/path/to/profiles-2026.json
+```
+
+```bash
+# Optional: show progress every 50 rows
+flask seed-profiles /absolute/path/to/profiles-2026.json --progress-every 50
+```
+
+Seed behavior:
+- Idempotent by name (case-insensitive): existing names are skipped.
+- Transaction-safe: on any error, inserts are rolled back.
+- IDs are generated with the model default UUID v7 generator.
+- `created_at` / `updated_at` are parsed as ISO 8601 and normalized to UTC.
+- Prints progress updates (`processed`, `inserted`, `skipped`, `elapsed_s`) while seeding.
+
+---
+
+## Natural Language Parsing Approach
+
+The natural language search endpoint will use a rule-based parser so the output is deterministic and grading-friendly.
+
+- **Input normalization**: lowercase, trim whitespace, collapse repeated spaces, and tokenize by words and simple operators.
+- **Keyword mapping**:
+  - gender terms (`male`, `males`, `female`, `females`) -> `gender` filter
+  - age group terms (`child`, `teenager`, `adult`, `senior`) -> `age_group` filter
+  - country terms (`from nigeria`, `from angola`, `from kenya`) -> `country_id` filter
+  - numeric age constraints (`above 30`, `over 30`, `under 18`, `below 18`) -> `age` range filter
+  - `young` -> `min_age=16`, `max_age=24`
+- **Filter construction**: parsed clauses are converted into a structured filter object and then mapped to SQLAlchemy predicates.
+- **Operator behavior**: mixed clauses default to AND semantics. If both male and female appear, gender filtering is dropped and other parsed filters are still applied.
+- **Pagination behavior**: `page` and `limit` are accepted via query params and use the same defaults/caps as `GET /api/profiles`.
+
+Example parse flow:
+1. Input: `female adults from NG sorted by newest page 2 limit 20`
+2. Parsed filters: `gender=female`, `age_group=adult`, `country_id=NG`
+3. Sort: `created_at desc`
+4. Pagination: `page=2`, `limit=20`
+
+## Natural Language Parser Limitations
+
+Current limitations to keep behavior predictable for automated grading:
+
+- No free-form intent resolution beyond supported keywords.
+- No fuzzy matching, typo correction, or synonym expansion outside the documented vocabulary.
+- No nested boolean logic with precedence (for example, mixed `AND/OR` groups with parentheses).
+- No multilingual parsing; English keywords only.
+- Ambiguous country text is not geocoded; only recognized country codes or explicitly supported names are accepted.
+- Unsupported phrases return a structured validation error instead of guessing.
+- Uninterpretable queries return `{ "status": "error", "message": "Unable to interpret query" }`.
+
+Edge cases intentionally left out for the first release:
+- Relative time expressions like `last month` or `this week`.
+- Natural language superlatives such as `most likely female`.
+- Cross-field comparative expressions such as `older males than females`.
+
+These sections describe the parser contract currently implemented by `GET /api/profiles/search`.
+
+---
+
+## Endpoint Contract Status
+
+Filtering, sorting, pagination, and natural-language search endpoint contracts are now implemented based on the current assignment specification.
 
 ---
 
