@@ -6,7 +6,6 @@ from typing import Optional
 from app import db
 from app.models import Profile
 
-
 ALLOWED_SORT_FIELDS = {
     'age': Profile.age,
     'created_at': Profile.created_at,

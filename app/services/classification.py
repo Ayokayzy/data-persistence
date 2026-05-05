@@ -1,3 +1,16 @@
+def country_display_name(country_id):
+    """Resolve ISO 3166-1 alpha-2 to English country name, or None."""
+    if not country_id or not isinstance(country_id, str):
+        return None
+    try:
+        import pycountry
+
+        c = pycountry.countries.get(alpha_2=country_id.upper())
+        return c.name if c else None
+    except Exception:
+        return None
+
+
 def classify_age_group(age):
     if age is None:
         return None

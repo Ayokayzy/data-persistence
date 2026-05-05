@@ -1,10 +1,13 @@
-import httpx
 import asyncio
+
+import httpx
+
 from app.services.classification import (
     classify_age_group,
+    country_display_name,
     get_top_nationality,
-    validate_genderize_response,
     validate_agify_response,
+    validate_genderize_response,
     validate_nationalize_response,
 )
 
@@ -52,6 +55,7 @@ async def enrich_profile_data(name: str, timeout: int = 10) -> dict:
     age_group = classify_age_group(age)
 
     country_id, country_probability = get_top_nationality(nationalize_response)
+    country_name = country_display_name(country_id)
 
     return {
         'gender': gender,
@@ -60,6 +64,7 @@ async def enrich_profile_data(name: str, timeout: int = 10) -> dict:
         'age': age,
         'age_group': age_group,
         'country_id': country_id,
+        'country_name': country_name,
         'country_probability': country_probability,
         # 'api_responses': {
         #     'genderize': gender_response,

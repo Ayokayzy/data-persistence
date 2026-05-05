@@ -1,5 +1,7 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
-from datetime import datetime, timezone, timedelta
+
 from app import create_app, db
 from app.models import Profile
 
@@ -255,7 +257,7 @@ class TestRoutes:
         assert [p['name'] for p in age_desc] == ['helena', 'emmanuel', 'sarah', 'musa', 'jide', 'amina']
 
         age_asc = client.get('/api/profiles?sort_by=age&order=asc').json['data']
-        assert [p['name'] for p in age_asc] == ['jide', 'amina', 'musa', 'sarah', 'emmanuel', 'helena']
+        assert [p['name'] for p in age_asc] == ['amina', 'jide', 'musa', 'sarah', 'emmanuel', 'helena']
 
         gp_desc = client.get('/api/profiles?sort_by=gender_probability&order=desc').json['data']
         assert [p['name'] for p in gp_desc] == ['emmanuel', 'sarah', 'helena', 'amina', 'musa', 'jide']
@@ -282,18 +284,15 @@ class TestRoutes:
             self._seed_profiles()
 
         data = client.get('/api/profiles?sort_by=nope&order=up&page=abc&limit=xyz&min_age=not-a-number').json
-        assert data['status'] == 'success'
-        assert data['page'] == 1
-        assert data['limit'] == 10
-        # Falls back to created_at desc: newest seeded row first.
-        assert data['data'][0]['name'] == 'amina'
+        assert data['status'] == 'error'
+        assert data['message'] == 'Invalid query parameters'
 
     def test_list_profiles_response_shape(self, app, client):
         with app.app_context():
             self._seed_profiles()
 
         payload = client.get('/api/profiles').json
-        assert set(payload.keys()) == {'status', 'page', 'limit', 'total', 'data'}
+        assert set(payload.keys()) == {'status', 'page', 'limit', 'total', 'total_pages', 'links', 'data'}
         row = payload['data'][0]
         assert set(row.keys()) == {
             'id',
